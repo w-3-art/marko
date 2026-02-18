@@ -157,8 +157,17 @@ export default function Home() {
 
       {/* Footer */}
       <footer className="py-8 px-4 border-t border-[var(--border)]">
-        <div className="container text-center text-[var(--muted)] text-sm">
+        <div className="container text-center text-[var(--muted)] text-sm space-y-2">
           <p>{t('footer.built')} 🔥 {t('footer.by')} • 2026</p>
+          <div className="flex justify-center gap-4">
+            <Link href="/privacy" className="hover:text-[var(--foreground)] transition-colors">
+              {locale === 'fr' ? 'Confidentialité' : 'Privacy Policy'}
+            </Link>
+            <span>·</span>
+            <Link href="/terms" className="hover:text-[var(--foreground)] transition-colors">
+              {locale === 'fr' ? 'CGU' : 'Terms of Service'}
+            </Link>
+          </div>
         </div>
       </footer>
 
