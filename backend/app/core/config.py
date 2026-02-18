@@ -29,6 +29,9 @@ class Settings(BaseSettings):
     # Frontend
     frontend_url: str = "http://localhost:3000"
     
+    # CORS - comma-separated list of allowed origins
+    allowed_origins: str = "http://localhost:3000,http://localhost:3001,https://marko.w3art.io"
+    
     class Config:
         env_file = ".env"
         extra = "allow"

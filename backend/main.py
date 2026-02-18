@@ -11,6 +11,7 @@ load_dotenv()
 
 from app.api import auth, chat, meta, content, campaigns, analytics
 from app.db.database import engine, Base
+from app.core.config import settings
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -27,14 +28,12 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# CORS
+# CORS - parse allowed origins from env variable
+allowed_origins = [origin.strip() for origin in settings.allowed_origins.split(",") if origin.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "https://marko.w3art.io",
-        os.getenv("FRONTEND_URL", "http://localhost:3000")
-    ],
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
