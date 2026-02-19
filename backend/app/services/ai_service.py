@@ -65,6 +65,12 @@ class AIService:
         Returns:
             AI response text
         """
+        # Check for ONBOARDING_START special message
+        if messages and messages[-1].get("content") == "ONBOARDING_START":
+            user_name = context.get("user_name", "") if context else ""
+            first_name = user_name.split()[0] if user_name else "toi"
+            return self._get_onboarding_message(first_name)
+        
         system = MARKO_SYSTEM_PROMPT
         
         if context:
@@ -86,6 +92,22 @@ class AIService:
         )
         
         return response.content[0].text
+    
+    def _get_onboarding_message(self, first_name: str) -> str:
+        """
+        Return the onboarding welcome message for new users.
+        """
+        return f"""Salut {first_name} ! 👋 Je suis **Marko**, ton CMO IA.
+
+Mon job ? T'aider à créer du contenu marketing qui cartonne sur Instagram et Facebook, sans que t'aies besoin d'être un expert.
+
+Pour bien démarrer, j'aurais besoin d'en savoir un peu plus sur toi :
+
+**C'est quoi ton activité ?** 🏪
+
+Dis-moi en quelques mots ce que tu fais (ex: "Je vends des bijoux faits main", "Je suis coach sportif", "J'ai une boulangerie artisanale"...)
+
+Ça va m'aider à créer du contenu vraiment adapté à ton business !"""
     
     async def generate_content(
         self,
