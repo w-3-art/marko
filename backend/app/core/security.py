@@ -34,7 +34,9 @@ def decode_token(token: str) -> dict:
     try:
         payload = jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
         return payload
-    except JWTError:
+    except JWTError as e:
+        import logging
+        logging.error(f"JWT decode error: {e} | secret_len={len(settings.jwt_secret)}")
         return None
 
 async def get_current_user(
