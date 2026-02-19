@@ -3,6 +3,7 @@ Marko Backend - AI CMO API
 """
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from contextlib import asynccontextmanager
 import os
 from dotenv import load_dotenv
@@ -12,6 +13,10 @@ load_dotenv()
 from app.api import auth, chat, meta, content, campaigns, analytics
 from app.db.database import engine, Base
 from app.core.config import settings
+
+# Create static/images directory for generated images at module load time
+# This ensures directory exists before StaticFiles mount
+os.makedirs("static/images", exist_ok=True)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -38,6 +43,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Mount static files for serving generated images
+# NOTE: Railway has EPHEMERAL filesystem - images will be lost on redeploy.
+# For production V2: use Cloudinary, S3, or similar persistent storage.
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # Routes
 app.include_router(auth.router, prefix="/api/auth", tags=["Authentication"])

@@ -6,12 +6,16 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import Optional, List
 from datetime import datetime
+import subprocess
+import uuid
+import os
 
 from app.db.database import get_db
 from app.db.models import User, Content, ContentAnalytics, MetaAccount
 from app.core.security import get_current_user
 from app.services.ai_service import ai_service
 from app.services.meta_service import meta_service
+from app.core.config import settings
 
 router = APIRouter()
 
@@ -69,7 +73,91 @@ class ContentUpdateRequest(BaseModel):
     scheduled_for: Optional[datetime] = None
     status: Optional[str] = None
 
+class ImageGenerateRequest(BaseModel):
+    prompt: str
+    resolution: str = "1K"  # 1K, 2K, or 4K
+
+class ImageGenerateResponse(BaseModel):
+    image_url: str
+    filename: str
+
 # ============== Routes ==============
+
+@router.post("/generate-image", response_model=ImageGenerateResponse)
+async def generate_image(
+    request: ImageGenerateRequest,
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Generate an image using Gemini (Nano Banana Pro).
+    
+    NOTE: Railway has EPHEMERAL filesystem - images will be lost on redeploy.
+    For production V2: use Cloudinary, S3, or similar persistent storage.
+    """
+    # Generate unique filename
+    timestamp = datetime.now().strftime('%Y%m%d-%H%M%S')
+    unique_id = uuid.uuid4().hex[:8]
+    filename = f"{timestamp}-{unique_id}.png"
+    filepath = f"static/images/{filename}"
+    
+    # Ensure directory exists
+    os.makedirs("static/images", exist_ok=True)
+    
+    # Get GEMINI_API_KEY from environment
+    gemini_key = os.environ.get("GEMINI_API_KEY")
+    if not gemini_key:
+        raise HTTPException(status_code=500, detail="GEMINI_API_KEY not configured")
+    
+    try:
+        # Call the Nano Banana Pro script
+        result = subprocess.run(
+            [
+                "uv", "run",
+                "/opt/homebrew/lib/node_modules/openclaw/skills/nano-banana-pro/scripts/generate_image.py",
+                "--prompt", request.prompt,
+                "--filename", filepath,
+                "--resolution", request.resolution
+            ],
+            capture_output=True,
+            text=True,
+            timeout=120,  # 2 minutes timeout for image generation
+            env={**os.environ, "GEMINI_API_KEY": gemini_key}
+        )
+        
+        if result.returncode != 0:
+            error_msg = result.stderr or result.stdout or "Unknown error"
+            raise HTTPException(
+                status_code=500, 
+                detail=f"Image generation failed: {error_msg}"
+            )
+        
+        # Check if file was created
+        if not os.path.exists(filepath):
+            raise HTTPException(
+                status_code=500,
+                detail="Image generation completed but file not found"
+            )
+        
+        # Build public URL
+        public_url = f"{settings.api_base_url}/static/images/{filename}"
+        
+        return ImageGenerateResponse(
+            image_url=public_url,
+            filename=filename
+        )
+        
+    except subprocess.TimeoutExpired:
+        raise HTTPException(
+            status_code=504,
+            detail="Image generation timed out"
+        )
+    except Exception as e:
+        if isinstance(e, HTTPException):
+            raise e
+        raise HTTPException(
+            status_code=500,
+            detail=f"Image generation error: {str(e)}"
+        )
 
 @router.post("/generate")
 async def generate_content(
