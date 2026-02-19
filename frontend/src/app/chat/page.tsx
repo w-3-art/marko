@@ -11,6 +11,8 @@ interface Message {
   role: 'user' | 'assistant';
   content: string;
   created_at: string;
+  generatedImage?: string; // URL of generated image for this message
+  isPublishing?: boolean;
 }
 
 interface Conversation {
@@ -31,6 +33,10 @@ export default function ChatPage() {
   const [isSending, setIsSending] = useState(false);
   const [metaStatus, setMetaStatus] = useState<{ connected: boolean; instagram_username?: string } | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [generatingImageFor, setGeneratingImageFor] = useState<number | null>(null);
+  const [publishingFor, setPublishingFor] = useState<number | null>(null);
+  const [showPublishModal, setShowPublishModal] = useState<{ messageId: number; caption: string; imageUrl: string } | null>(null);
+  const [onboardingTriggered, setOnboardingTriggered] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const scrollToBottom = () => {
@@ -54,6 +60,12 @@ export default function ChatPage() {
         
         setConversations(convos);
         setMetaStatus(meta);
+        
+        // Trigger onboarding for new users (no conversations)
+        if (convos.length === 0 && !onboardingTriggered) {
+          setOnboardingTriggered(true);
+          triggerOnboarding();
+        }
       } catch {
         router.push('/login');
       } finally {
@@ -61,7 +73,107 @@ export default function ChatPage() {
       }
     };
     init();
-  }, [router]);
+  }, [router, onboardingTriggered]);
+  
+  // Trigger onboarding for new users
+  const triggerOnboarding = async () => {
+    setIsSending(true);
+    try {
+      const response = await api.sendMessage('ONBOARDING_START');
+      setCurrentConversationId(response.conversation_id);
+      setMessages([response.response as Message]);
+      const convos = await api.getConversations();
+      setConversations(convos);
+    } catch (err) {
+      console.error('Error triggering onboarding:', err);
+    } finally {
+      setIsSending(false);
+    }
+  };
+  
+  // Detect if a message looks like content (has hashtags, caption-like structure)
+  const isContentMessage = (content: string): boolean => {
+    const hasHashtags = /#\w+/.test(content);
+    const hasEmojis = /[\u{1F300}-\u{1F9FF}]/u.test(content);
+    const looksLikeCaption = content.length > 50 && (hasHashtags || hasEmojis);
+    return looksLikeCaption;
+  };
+  
+  // Extract caption text (remove strategy notes, keep main caption + hashtags)
+  const extractCaption = (content: string): string => {
+    // Try to extract just the caption part
+    const lines = content.split('\n');
+    const captionLines: string[] = [];
+    let inCaption = false;
+    
+    for (const line of lines) {
+      // Skip strategy/notes sections
+      if (line.includes('Stratégie') || line.includes('Note') || line.includes('Meilleur moment')) {
+        break;
+      }
+      // Start capturing after "Caption:" or similar headers
+      if (line.includes('Caption') || line.includes('Texte') || line.includes('**Post**')) {
+        inCaption = true;
+        continue;
+      }
+      if (inCaption || /#\w+/.test(line) || line.trim().length > 20) {
+        captionLines.push(line);
+      }
+    }
+    
+    return captionLines.join('\n').trim() || content;
+  };
+  
+  // Generate image for a message
+  const handleGenerateImage = async (messageId: number, content: string) => {
+    setGeneratingImageFor(messageId);
+    try {
+      // Create a prompt based on the content
+      const prompt = `Professional social media marketing image for: ${content.substring(0, 200)}. Modern, clean, Instagram-worthy style.`;
+      const result = await api.generateImage(prompt);
+      
+      // Update the message with the generated image
+      setMessages(prev => prev.map(m => 
+        m.id === messageId ? { ...m, generatedImage: result.image_url } : m
+      ));
+    } catch (err) {
+      console.error('Error generating image:', err);
+      alert('Erreur lors de la génération de l\'image');
+    } finally {
+      setGeneratingImageFor(null);
+    }
+  };
+  
+  // Open publish modal
+  const handlePublishClick = (messageId: number, content: string, imageUrl?: string) => {
+    const caption = extractCaption(content);
+    setShowPublishModal({
+      messageId,
+      caption,
+      imageUrl: imageUrl || ''
+    });
+  };
+  
+  // Publish to Instagram
+  const handlePublish = async () => {
+    if (!showPublishModal) return;
+    
+    setPublishingFor(showPublishModal.messageId);
+    try {
+      await api.publishToMeta({
+        platform: 'instagram',
+        content_type: 'post',
+        caption: showPublishModal.caption,
+        media_url: showPublishModal.imageUrl || undefined
+      });
+      alert('✅ Publié sur Instagram !');
+      setShowPublishModal(null);
+    } catch (err: any) {
+      alert(`Erreur: ${err.message || 'Publication échouée'}`);
+    } finally {
+      setPublishingFor(null);
+    }
+  };
 
   const loadConversation = async (id: number) => {
     try {
@@ -259,12 +371,60 @@ export default function ChatPage() {
               {messages.map((msg) => (
                 <div
                   key={msg.id}
-                  className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
+                  className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'}`}
                 >
                   <div
                     className={`message ${msg.role === 'user' ? 'message-user' : 'message-assistant'} text-sm sm:text-base`}
                     dangerouslySetInnerHTML={{ __html: formatContent(msg.content) }}
                   />
+                  
+                  {/* Generated Image Display */}
+                  {msg.generatedImage && (
+                    <div className="mt-2 rounded-lg overflow-hidden max-w-xs">
+                      <img 
+                        src={msg.generatedImage} 
+                        alt="Generated" 
+                        className="w-full h-auto"
+                      />
+                    </div>
+                  )}
+                  
+                  {/* Marko Actions - show for assistant content messages */}
+                  {msg.role === 'assistant' && isContentMessage(msg.content) && (
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      <button
+                        onClick={() => handleGenerateImage(msg.id, msg.content)}
+                        disabled={generatingImageFor === msg.id}
+                        className="btn btn-secondary text-xs py-1 px-3 flex items-center gap-1"
+                      >
+                        {generatingImageFor === msg.id ? (
+                          <>
+                            <span className="animate-spin">⏳</span>
+                            Génération...
+                          </>
+                        ) : (
+                          <>🎨 Générer une image</>
+                        )}
+                      </button>
+                      
+                      {metaStatus?.connected && (
+                        <button
+                          onClick={() => handlePublishClick(msg.id, msg.content, msg.generatedImage)}
+                          disabled={publishingFor === msg.id}
+                          className="btn btn-primary text-xs py-1 px-3 flex items-center gap-1"
+                        >
+                          {publishingFor === msg.id ? (
+                            <>
+                              <span className="animate-spin">⏳</span>
+                              Publication...
+                            </>
+                          ) : (
+                            <>📱 Publier sur Instagram</>
+                          )}
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </div>
               ))}
               {isSending && (
@@ -317,6 +477,63 @@ export default function ChatPage() {
           </p>
         </div>
       </main>
+      
+      {/* Publish Modal */}
+      {showPublishModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-[var(--card)] rounded-xl max-w-md w-full p-6 space-y-4">
+            <h3 className="text-lg font-bold">📱 Publier sur Instagram</h3>
+            
+            {showPublishModal.imageUrl && (
+              <div className="rounded-lg overflow-hidden">
+                <img 
+                  src={showPublishModal.imageUrl} 
+                  alt="À publier" 
+                  className="w-full h-auto"
+                />
+              </div>
+            )}
+            
+            <div>
+              <label className="text-sm text-[var(--muted)] block mb-1">Caption</label>
+              <textarea
+                value={showPublishModal.caption}
+                onChange={(e) => setShowPublishModal({ ...showPublishModal, caption: e.target.value })}
+                className="w-full p-3 rounded-lg bg-[var(--background)] border border-[var(--border)] text-sm min-h-[120px]"
+              />
+            </div>
+            
+            {!showPublishModal.imageUrl && (
+              <div>
+                <label className="text-sm text-[var(--muted)] block mb-1">URL de l&apos;image (optionnel)</label>
+                <input
+                  type="text"
+                  value={showPublishModal.imageUrl}
+                  onChange={(e) => setShowPublishModal({ ...showPublishModal, imageUrl: e.target.value })}
+                  placeholder="https://..."
+                  className="w-full p-3 rounded-lg bg-[var(--background)] border border-[var(--border)] text-sm"
+                />
+              </div>
+            )}
+            
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={() => setShowPublishModal(null)}
+                className="btn btn-secondary"
+              >
+                Annuler
+              </button>
+              <button
+                onClick={handlePublish}
+                disabled={publishingFor !== null}
+                className="btn btn-primary"
+              >
+                {publishingFor ? 'Publication...' : 'Publier'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
