@@ -279,6 +279,28 @@ class ApiClient {
   async getTopContent(limit: number = 10) {
     return this.request<Array<any>>(`/api/analytics/top-content?limit=${limit}`);
   }
+
+  // Image Generation
+  async generateImage(prompt: string, resolution: string = '1K') {
+    return this.request<{ image_url: string; filename: string }>('/api/content/generate-image', {
+      method: 'POST',
+      body: JSON.stringify({ prompt, resolution }),
+    });
+  }
+
+  // Direct Meta Publishing
+  async publishToMeta(data: {
+    platform: string;
+    content_type: string;
+    caption: string;
+    media_url?: string;
+    link?: string;
+  }) {
+    return this.request<{ status: string; post_id: string }>('/api/meta/publish', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
 }
 
 export const api = new ApiClient();
