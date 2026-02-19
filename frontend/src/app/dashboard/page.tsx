@@ -11,22 +11,26 @@ export default function DashboardPage() {
   const [metaStatus, setMetaStatus] = useState<any>(null);
   const [analytics, setAnalytics] = useState<any>(null);
   const [content, setContent] = useState<any[]>([]);
+  const [allContent, setAllContent] = useState<any[]>([]);
+  const [showCalendar, setShowCalendar] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
     const init = async () => {
       try {
-        const [userData, meta, stats, contentList] = await Promise.all([
+        const [userData, meta, stats, contentList, allContentList] = await Promise.all([
           api.getMe(),
           api.getMetaStatus(),
           api.getAnalyticsOverview(30).catch(() => null),
           api.listContent({ limit: 5 } as any).catch(() => []),
+          api.listContent({ limit: 50 } as any).catch(() => []),
         ]);
         
         setUser(userData);
         setMetaStatus(meta);
         setAnalytics(stats);
         setContent(contentList);
+        setAllContent(allContentList);
       } catch {
         router.push('/login');
       } finally {
@@ -35,6 +39,25 @@ export default function DashboardPage() {
     };
     init();
   }, [router]);
+  
+  // Group content by date for calendar view
+  const groupContentByDate = (items: any[]) => {
+    const grouped: { [key: string]: any[] } = {};
+    
+    items.forEach(item => {
+      const date = item.scheduled_for || item.published_at || item.created_at;
+      const dateKey = new Date(date).toISOString().split('T')[0];
+      if (!grouped[dateKey]) {
+        grouped[dateKey] = [];
+      }
+      grouped[dateKey].push(item);
+    });
+    
+    // Sort by date descending
+    return Object.entries(grouped)
+      .sort(([a], [b]) => b.localeCompare(a))
+      .map(([date, items]) => ({ date, items }));
+  };
 
   const handleConnectMeta = async () => {
     try {
@@ -151,6 +174,77 @@ export default function DashboardPage() {
             </div>
           </section>
         )}
+
+        {/* Content Calendar Toggle */}
+        <section className="card mb-8">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-xl font-bold">📅 Calendrier de contenu</h2>
+            <button 
+              onClick={() => setShowCalendar(!showCalendar)}
+              className="btn-secondary text-sm"
+            >
+              {showCalendar ? 'Masquer' : 'Voir tout'}
+            </button>
+          </div>
+          
+          {showCalendar && allContent.length > 0 ? (
+            <div className="space-y-4 max-h-[400px] overflow-y-auto">
+              {groupContentByDate(allContent).map(({ date, items }) => (
+                <div key={date} className="border-l-2 border-gray-700 pl-4">
+                  <div className="text-sm font-medium text-gray-400 mb-2">
+                    {new Date(date).toLocaleDateString('fr-FR', { 
+                      weekday: 'long', 
+                      day: 'numeric', 
+                      month: 'long' 
+                    })}
+                  </div>
+                  <div className="space-y-2">
+                    {items.map((item: any) => (
+                      <div 
+                        key={item.id}
+                        className={`flex items-center gap-2 p-2 rounded ${
+                          item.status === 'published' 
+                            ? 'bg-green-500/10 border-l-2 border-green-500' 
+                            : item.status === 'scheduled'
+                            ? 'bg-yellow-500/10 border-l-2 border-yellow-500'
+                            : 'bg-gray-800/50 border-l-2 border-gray-500'
+                        }`}
+                      >
+                        <span className="text-lg">
+                          {item.content_type === 'reel' && '🎬'}
+                          {item.content_type === 'story' && '📱'}
+                          {item.content_type === 'post' && '📷'}
+                          {item.content_type === 'ad' && '📢'}
+                          {!['reel', 'story', 'post', 'ad'].includes(item.content_type) && '📝'}
+                        </span>
+                        <span className="text-sm flex-1 truncate">
+                          {item.title || item.caption?.substring(0, 50) || 'Sans titre'}
+                        </span>
+                        <span className={`text-xs px-2 py-0.5 rounded ${
+                          item.status === 'published' ? 'text-green-400' :
+                          item.status === 'scheduled' ? 'text-yellow-400' : 'text-gray-400'
+                        }`}>
+                          {item.status === 'published' && '✓ Publié'}
+                          {item.status === 'scheduled' && '⏰ Planifié'}
+                          {item.status === 'draft' && '📝 Brouillon'}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : showCalendar ? (
+            <p className="text-gray-400 text-center py-4">
+              Aucun contenu pour le moment. 
+              <Link href="/chat" className="text-indigo-400 ml-1">Crée ton premier post →</Link>
+            </p>
+          ) : (
+            <p className="text-gray-400 text-sm">
+              Visualise tous tes posts passés et planifiés en un coup d&apos;œil.
+            </p>
+          )}
+        </section>
 
         {/* Recent Content */}
         <section className="card">
