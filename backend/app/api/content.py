@@ -6,7 +6,6 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import Optional, List
 from datetime import datetime
-import subprocess
 import uuid
 import os
 
@@ -89,11 +88,17 @@ async def generate_image(
     current_user: User = Depends(get_current_user)
 ):
     """
-    Generate an image using Gemini (Nano Banana Pro).
+    Generate an image using Gemini (Nano Banana Pro / gemini-3-pro-image-preview).
     
     NOTE: Railway has EPHEMERAL filesystem - images will be lost on redeploy.
     For production V2: use Cloudinary, S3, or similar persistent storage.
     """
+    from google import genai
+    from google.genai import types
+    from PIL import Image as PILImage
+    from io import BytesIO
+    import base64
+    
     # Generate unique filename
     timestamp = datetime.now().strftime('%Y%m%d-%H%M%S')
     unique_id = uuid.uuid4().hex[:8]
@@ -109,33 +114,49 @@ async def generate_image(
         raise HTTPException(status_code=500, detail="GEMINI_API_KEY not configured")
     
     try:
-        # Call the Nano Banana Pro script
-        result = subprocess.run(
-            [
-                "uv", "run",
-                "/opt/homebrew/lib/node_modules/openclaw/skills/nano-banana-pro/scripts/generate_image.py",
-                "--prompt", request.prompt,
-                "--filename", filepath,
-                "--resolution", request.resolution
-            ],
-            capture_output=True,
-            text=True,
-            timeout=120,  # 2 minutes timeout for image generation
-            env={**os.environ, "GEMINI_API_KEY": gemini_key}
+        # Initialize Gemini client
+        client = genai.Client(api_key=gemini_key)
+        
+        # Generate image using Gemini 3 Pro Image
+        response = client.models.generate_content(
+            model="gemini-3-pro-image-preview",
+            contents=request.prompt,
+            config=types.GenerateContentConfig(
+                response_modalities=["TEXT", "IMAGE"],
+                image_config=types.ImageConfig(
+                    image_size=request.resolution  # "1K", "2K", or "4K"
+                )
+            )
         )
         
-        if result.returncode != 0:
-            error_msg = result.stderr or result.stdout or "Unknown error"
-            raise HTTPException(
-                status_code=500, 
-                detail=f"Image generation failed: {error_msg}"
-            )
+        # Process response and save image
+        image_saved = False
+        for part in response.parts:
+            if part.inline_data is not None:
+                # Get image data
+                image_data = part.inline_data.data
+                if isinstance(image_data, str):
+                    image_data = base64.b64decode(image_data)
+                
+                # Open and convert to RGB
+                image = PILImage.open(BytesIO(image_data))
+                
+                if image.mode == 'RGBA':
+                    rgb_image = PILImage.new('RGB', image.size, (255, 255, 255))
+                    rgb_image.paste(image, mask=image.split()[3])
+                    rgb_image.save(filepath, 'PNG')
+                elif image.mode == 'RGB':
+                    image.save(filepath, 'PNG')
+                else:
+                    image.convert('RGB').save(filepath, 'PNG')
+                
+                image_saved = True
+                break
         
-        # Check if file was created
-        if not os.path.exists(filepath):
+        if not image_saved:
             raise HTTPException(
                 status_code=500,
-                detail="Image generation completed but file not found"
+                detail="No image was generated in the response"
             )
         
         # Build public URL
@@ -146,14 +167,9 @@ async def generate_image(
             filename=filename
         )
         
-    except subprocess.TimeoutExpired:
-        raise HTTPException(
-            status_code=504,
-            detail="Image generation timed out"
-        )
+    except HTTPException:
+        raise
     except Exception as e:
-        if isinstance(e, HTTPException):
-            raise e
         raise HTTPException(
             status_code=500,
             detail=f"Image generation error: {str(e)}"
