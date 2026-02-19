@@ -9,14 +9,11 @@ from datetime import datetime, timedelta
 import secrets
 
 from app.db.database import get_db
-from app.db.models import User, MetaAccount
+from app.db.models import User, MetaAccount, OAuthState
 from app.core.security import get_current_user
 from app.services.meta_service import meta_service
 
 router = APIRouter()
-
-# Store OAuth states temporarily (in production, use Redis)
-oauth_states = {}
 
 # ============== Schemas ==============
 
@@ -75,14 +72,26 @@ async def get_meta_status(
 
 @router.get("/connect")
 async def get_connect_url(
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
 ):
     """Get OAuth URL to connect Meta account"""
     state = secrets.token_urlsafe(32)
-    oauth_states[state] = {
-        "user_id": current_user.id,
-        "created_at": datetime.utcnow()
-    }
+    
+    # Clean up old unused states for this user (older than 30 minutes)
+    old_threshold = datetime.utcnow() - timedelta(minutes=30)
+    db.query(OAuthState).filter(
+        OAuthState.user_id == current_user.id,
+        OAuthState.created_at < old_threshold
+    ).delete()
+    
+    # Store state in database
+    oauth_state = OAuthState(
+        state=state,
+        user_id=current_user.id
+    )
+    db.add(oauth_state)
+    db.commit()
     
     oauth_url = meta_service.get_oauth_url(state)
     return {"oauth_url": oauth_url}
@@ -93,16 +102,26 @@ async def handle_callback(
     db: Session = Depends(get_db)
 ):
     """Handle OAuth callback from Meta"""
-    # Verify state
-    state_data = oauth_states.pop(request.state, None)
-    if not state_data:
+    # Verify state from database
+    oauth_state = db.query(OAuthState).filter(
+        OAuthState.state == request.state,
+        OAuthState.used == False
+    ).first()
+    
+    if not oauth_state:
         raise HTTPException(status_code=400, detail="Invalid state")
     
     # Check state age (max 10 minutes)
-    if datetime.utcnow() - state_data["created_at"] > timedelta(minutes=10):
+    if datetime.utcnow() - oauth_state.created_at > timedelta(minutes=10):
+        db.delete(oauth_state)
+        db.commit()
         raise HTTPException(status_code=400, detail="State expired")
     
-    user_id = state_data["user_id"]
+    # Mark state as used
+    oauth_state.used = True
+    db.commit()
+    
+    user_id = oauth_state.user_id
     
     # Exchange code for token
     token_response = await meta_service.exchange_code(request.code)
@@ -141,17 +160,38 @@ async def handle_callback(
     db.commit()
     db.refresh(account)
     
+    # Build pages response with Instagram info
+    pages_response = []
+    for p in pages:
+        page_data = {
+            "id": p["id"],
+            "name": p["name"],
+            "has_instagram": "instagram_business_account" in p,
+            "access_token": p.get("access_token")  # Page-level access token
+        }
+        
+        # If page has Instagram, fetch the account details
+        if "instagram_business_account" in p:
+            ig_account = p["instagram_business_account"]
+            page_data["instagram_account"] = {
+                "id": ig_account.get("id"),
+                "username": ig_account.get("username", "")
+            }
+            # If we didn't get username, try to fetch it
+            if not ig_account.get("username") and p.get("access_token"):
+                ig_info = await meta_service.get_instagram_account(p["id"], p["access_token"])
+                if ig_info:
+                    page_data["instagram_account"] = {
+                        "id": ig_info.get("id"),
+                        "username": ig_info.get("username", "")
+                    }
+        
+        pages_response.append(page_data)
+    
     return {
         "status": "connected",
         "account_id": account.id,
-        "pages": [
-            {
-                "id": p["id"],
-                "name": p["name"],
-                "has_instagram": "instagram_business_account" in p
-            }
-            for p in pages
-        ],
+        "pages": pages_response,
         "ad_accounts": [
             {
                 "id": a["id"],
@@ -177,7 +217,7 @@ async def select_page(
     
     account.facebook_page_id = selection.page_id
     account.facebook_page_name = selection.page_name
-    # Note: In production, store page token separately and securely
+    account.page_access_token = selection.page_token  # Store page-level token for publishing
     
     if selection.instagram_account_id:
         account.instagram_account_id = selection.instagram_account_id
@@ -203,13 +243,16 @@ async def publish_content(
     if not account:
         raise HTTPException(status_code=400, detail="No active Meta account. Please connect first.")
     
+    # Use page token for publishing, fallback to user token
+    publish_token = account.page_access_token or account.access_token
+    
     if request.platform == "instagram":
         if not account.instagram_account_id:
             raise HTTPException(status_code=400, detail="No Instagram account connected")
         
         result = await meta_service.publish_to_instagram(
             ig_user_id=account.instagram_account_id,
-            access_token=account.access_token,
+            access_token=publish_token,
             caption=request.caption,
             image_url=request.media_url if request.content_type != "reel" else None,
             video_url=request.media_url if request.content_type in ["reel", "video"] else None,
@@ -222,7 +265,7 @@ async def publish_content(
         
         result = await meta_service.publish_to_facebook(
             page_id=account.facebook_page_id,
-            page_token=account.access_token,  # Should use page token
+            page_token=publish_token,  # Now correctly using page token
             message=request.caption,
             link=request.link,
             photo_url=request.media_url

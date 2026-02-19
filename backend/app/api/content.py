@@ -216,6 +216,9 @@ async def publish_content(
     if content.hashtags:
         full_caption += "\n\n" + " ".join([f"#{h}" for h in content.hashtags])
     
+    # Use page token for publishing, fallback to user token
+    publish_token = account.page_access_token or account.access_token
+    
     # Publish based on platform
     if content.platform == "instagram":
         if not account.instagram_account_id:
@@ -225,7 +228,7 @@ async def publish_content(
         
         result = await meta_service.publish_to_instagram(
             ig_user_id=account.instagram_account_id,
-            access_token=account.access_token,
+            access_token=publish_token,
             caption=full_caption,
             image_url=media_url if content.content_type != "reel" else None,
             video_url=media_url if content.content_type in ["reel", "video"] else None,
@@ -240,7 +243,7 @@ async def publish_content(
         
         result = await meta_service.publish_to_facebook(
             page_id=account.facebook_page_id,
-            page_token=account.access_token,
+            page_token=publish_token,  # Now correctly using page token
             message=full_caption,
             link=content.link_url,
             photo_url=media_url

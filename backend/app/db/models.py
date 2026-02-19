@@ -44,6 +44,21 @@ class User(Base):
     contents = relationship("Content", back_populates="user")
     campaigns = relationship("Campaign", back_populates="user")
 
+# ============== OAuth States ==============
+
+class OAuthState(Base):
+    """Store OAuth states in DB instead of memory for production reliability"""
+    __tablename__ = "oauth_states"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    state = Column(String(255), unique=True, index=True, nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    used = Column(Boolean, default=False)
+    
+    # Relationship
+    user = relationship("User")
+
 # ============== Meta Integration ==============
 
 class MetaAccount(Base):
@@ -60,6 +75,7 @@ class MetaAccount(Base):
     # Business accounts
     facebook_page_id = Column(String(255))
     facebook_page_name = Column(String(255))
+    page_access_token = Column(Text)  # Page-level token for publishing
     instagram_account_id = Column(String(255))
     instagram_username = Column(String(255))
     ad_account_id = Column(String(255))

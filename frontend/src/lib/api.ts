@@ -2,7 +2,7 @@
  * API client for Marko backend
  */
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001';
 
 class ApiClient {
   private token: string | null = null;
@@ -139,6 +139,52 @@ class ApiClient {
   async disconnectMeta() {
     return this.request<{ status: string }>('/api/meta/disconnect', {
       method: 'DELETE',
+    });
+  }
+
+  async metaCallback(data: { code: string; state: string }) {
+    return this.request<{
+      status: string;
+      account_id: number;
+      pages: Array<{
+        id: string;
+        name: string;
+        has_instagram: boolean;
+        access_token?: string;
+        instagram_account?: {
+          id: string;
+          username: string;
+        };
+      }>;
+      ad_accounts: Array<{
+        id: string;
+        name: string;
+      }>;
+    }>('/api/meta/callback', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async selectMetaPage(data: {
+    page_id: string;
+    page_name: string;
+    page_token: string;
+    instagram_account_id?: string;
+    instagram_username?: string;
+  }) {
+    return this.request<{
+      status: string;
+      account: {
+        id: number;
+        facebook_page_id: string;
+        facebook_page_name: string;
+        instagram_account_id?: string;
+        instagram_username?: string;
+      };
+    }>('/api/meta/select-page', {
+      method: 'POST',
+      body: JSON.stringify(data),
     });
   }
 
