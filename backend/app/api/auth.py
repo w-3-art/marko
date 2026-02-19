@@ -69,7 +69,7 @@ async def register(user_data: UserCreate, db: Session = Depends(get_db)):
     
     # Create token
     access_token = create_access_token(
-        data={"sub": user.id},
+        data={"sub": str(user.id)},
         expires_delta=timedelta(minutes=settings.access_token_expire_minutes)
     )
     
@@ -87,7 +87,7 @@ async def login(user_data: UserLogin, db: Session = Depends(get_db)):
         )
     
     access_token = create_access_token(
-        data={"sub": user.id},
+        data={"sub": str(user.id)},
         expires_delta=timedelta(minutes=settings.access_token_expire_minutes)
     )
     
