@@ -299,3 +299,25 @@ async def disconnect(
     db.query(MetaAccount).filter(MetaAccount.user_id == current_user.id).delete()
     db.commit()
     return {"status": "disconnected"}
+
+@router.get("/add-tester-instructions")
+async def get_tester_instructions():
+    """Get instructions for adding testers to the Meta app"""
+    return {
+        "title": "Comment ajouter des testeurs à Marko",
+        "steps": [
+            "1. Aller sur developers.facebook.com",
+            "2. Sélectionner l'app Marko",
+            "3. Aller dans App Roles → Roles",
+            "4. Cliquer sur 'Add People'",
+            "5. Entrer le nom/email Facebook du testeur",
+            "6. Sélectionner le rôle 'Tester'",
+            "7. Le testeur doit accepter l'invitation dans ses notifications Facebook"
+        ],
+        "requirements": [
+            "Le testeur doit avoir un compte Instagram Business ou Creator",
+            "Le compte Instagram doit être connecté à une Page Facebook",
+            "Le testeur doit accepter les permissions lors de la connexion"
+        ],
+        "contact": "Pour être ajouté comme testeur, contactez benjamin@w3art.io"
+    }
